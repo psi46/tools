@@ -4,7 +4,7 @@
 
 
 char hdrFileName[] = "pixel_dtb.h";
-char hdrFileNameHost[] = "pxar_rpc.h";
+char hdrFileNameHost[] = "pxar_rpc.h"; // pixel_dtb.h
 char className[] = "CTestboard";
 
 
@@ -25,30 +25,15 @@ void CreateTimeStamp()
 	else timestamp[0] = 0;
 }
 
-
-typedef list<string> functList;
-typedef list<string>::iterator functListIterator;
-
-
-bool ReadFunctDefinitions(const char *filename, functList &fl)
+struct rpcfunct
 {
-	string s;
-	ifstream src(filename);
-	if (!src) { printf("ERROR: could not open source file\n"); return false; }
+	rpcfunct(bool empty, string &fname) : emptyfnct(empty), name(fname) {}
+	bool emptyfnct;
+	string name;
+};
 
-	while (!src.eof())
-	{
-		getline(src,s);
-		unsigned int found = s.find_last_of('$');
-		if (found == string::npos) continue;
-		fl.push_back(s);
-	}
-
-	src.close();
-    
-    return true;
-}
-
+typedef list<rpcfunct> functList;
+typedef list<rpcfunct>::iterator functListIterator;
 
 
 // === generate server code ====================================================
@@ -63,9 +48,9 @@ void GenerateServerEntry(FILE *f, unsigned int cmd, const char *fname, const cha
 
 	// generate declaration
 	fprintf(f,
-		"bool %s(CRpcIo &rpc_io, rpcMessage &msg)\n"
+		"bool %s(rpcMessage &msg)\n"
 		"{\n"
-		"\tif (!msg.CheckSize(%u)) return false;\n",
+		"\tif (!msg.CheckCmdSize(%u)) return false;\n",
 		cmdId.c_str(), plist.GetTotalParBytes());
 	plist.WriteAllDtbSendPar(f);
 	plist.WriteAllDtbSendDat(f);
@@ -75,11 +60,11 @@ void GenerateServerEntry(FILE *f, unsigned int cmd, const char *fname, const cha
 
 	if (plist.HasRetValues())
 	{
-		fprintf(f, "\tmsg.Create(%u);\n", cmd);
+		fprintf(f, "\tmsg.CreateCmd(%u);\n", cmd);
 		plist.WriteAllDtbRecvPar(f);
-		fputs("\tif (!msg.Send(rpc_io)) return false;\n", f);
+		fputs("\tif (!msg.SendCmd()) return false;\n", f);
 		plist.WriteAllDtbRecvDat(f);
-		fputs("\trpc_io.Flush();\n", f);
+		fputs("\tmsg.Flush();\n", f);
 	}
 
 	fputs("\treturn true;\n}\n\n", f);
@@ -113,10 +98,10 @@ void GenerateServerCode(functList &fl, FILE *f)
 		functListIterator i;
 		for (i = fl.begin(); i != fl.end(); i++)
 		{
-			unsigned int found = i->find_last_of('$');
-			name = i->substr(0,found);
-			parameter = i->substr(found+1);
-			GenerateServerEntry( f,  cmd, name.c_str(), parameter.c_str());
+			unsigned int found = i->name.find_last_of('$');
+			name = i->name.substr(0,found);
+			parameter = i->name.substr(found+1);
+			if (!i->emptyfnct) GenerateServerEntry( f,  cmd, name.c_str(), parameter.c_str());
 			cmd++;
 		}
 	}
@@ -132,13 +117,13 @@ void GenerateServerCodeTrailer(functList &fl, FILE *f)
 		"const CRpcCall rpc_cmdlist[] =\n{\n"
 	);
 	unsigned int cmd = 0;
-	list<string>::iterator i;
+	list<rpcfunct>::iterator i;
 	for (i = fl.begin(); i != fl.end(); i++)
 	{
 		if (cmd == 0)
-			fprintf(f, "\t/* %5u */ { rpc__%s, \"%s\" }", cmd, i->c_str(), i->c_str());
+			fprintf(f, "\t/* %5u */ { rpc__%s, \"%s\" }", cmd, i->name.c_str(), i->name.c_str());
 		else
-			fprintf(f, ",\n\t/* %5u */ { rpc__%s, \"%s\" }", cmd, i->c_str(), i->c_str());
+			fprintf(f, ",\n\t/* %5u */ { rpc__%s, \"%s\" }", cmd, i->name.c_str(), i->name.c_str());
 		cmd++;
 	}
 	fprintf
@@ -148,12 +133,16 @@ void GenerateServerCodeTrailer(functList &fl, FILE *f)
 		"void rpc_Dispatcher(CRpcIo &rpc_io)\n"
 		"{\n"
 		"\trpcMessage msg;\n"
+		"\tmsg.SetIo(rpc_io);\n"
 		"\twhile (true)\n"
 		"\t{\n"
-		"\t\tmsg.Receive(rpc_io);\n"
-		"\t\tif (rpc_error.HasError()) continue;\n"
-		"\t\tif (msg.GetCmd() >= %u) continue;\n"
-		"\t\trpc_cmdlist[msg.GetCmd()].call(rpc_io, msg);\n"
+		"\t\tif (msg.RecvCmd())\n"
+		"\t\t{\n"
+		"\t\t\tuint16_t cmd = msg.GetCmd();\n"
+		"\t\t\tif (rpc_error.HasError()) continue;\n"
+		"\t\t\tif (cmd >= %u) continue;\n"
+		"\t\t\tif (!rpc_cmdlist[cmd].call(msg)) msg.GetIo().Reset();\n"
+		"\t\t}\n"
 		"\t}\n}\n", (unsigned int)(fl.size())
 	);
 }
@@ -220,13 +209,13 @@ void GenerateClientCodeHeader(functList &fl, FILE *f)
 	fprintf(f, "const unsigned int %s::rpc_cmdListSize = %i;\n\n", className, int(fl.size()));
 	fprintf(f, "const char *%s::rpc_cmdName[] =\n{\n", className);
 	unsigned int cmd = 0;
-	list<string>::iterator i;
+	list<rpcfunct>::iterator i;
 	for (i = fl.begin(); i != fl.end(); i++)
 	{
 		if (cmd == 0)
-			fprintf(f, "\t/* %5u */ \"%s\"", cmd, i->c_str());
+			fprintf(f, "\t/* %5u */ \"%s\"", cmd, i->name.c_str());
 		else
-			fprintf(f, ",\n\t/* %5u */ \"%s\"", cmd, i->c_str());
+			fprintf(f, ",\n\t/* %5u */ \"%s\"", cmd, i->name.c_str());
 		cmd++;
 	}
 	fprintf(f, "\n};\n\n");
@@ -241,12 +230,12 @@ bool GenerateClientCode(functList &fl, FILE *f)
 	try
 	{
 		unsigned int cmd = 0;
-		list<string>::iterator i;
+		list<rpcfunct>::iterator i;
 		for (i = fl.begin(); i != fl.end(); i++)
 		{
-			unsigned int found = i->find_last_of('$');
-			name = i->substr(0,found);
-			parameter = i->substr(found+1);
+			unsigned int found = i->name.find_last_of('$');
+			name = i->name.substr(0,found);
+			parameter = i->name.substr(found+1);
 			GenerateClientEntry(f, cmd, name.c_str(), parameter.c_str());
 			cmd++;
 		}
@@ -272,7 +261,7 @@ int main(int argc, char* argv[])
 	char *hstFileName = 0;
 
 	// --- read command line parameter --------------------------------------
-	if (argc < 2 || argc > 4) { Help("Wong number of arguments"); return 1; }
+	if (argc < 2 || argc > 4) { Help("Wrong number of arguments"); return 1; }
 	srcFileName = argv[1];
 	if (srcFileName == 0) { Help(); return 1; }
 	for (int i=2; i<argc; i++)
@@ -282,7 +271,7 @@ int main(int argc, char* argv[])
 		{
 			case 'd': dtbFileName = &(argv[i][2]); break;
 			case 'h': hstFileName = &(argv[i][2]); break;
-			default: Help("Wong argument opti"); return 1;
+			default: Help("Wrong argument opti"); return 1;
 		}
 	}
 
@@ -300,7 +289,7 @@ int main(int argc, char* argv[])
 		{
 			parser.GetRpcExport();
 			parser.GetFunctionDecl();
-			cmdList.push_back(parser.GetFname() + '$' + parser.GetFparam());
+			cmdList.push_back(rpcfunct(parser.IsEmptyFnct(), parser.GetFname() + '$' + parser.GetFparam()));
 
 			printf("%s$%s\n", parser.GetFname().c_str(), parser.GetFparam().c_str());
 		}
