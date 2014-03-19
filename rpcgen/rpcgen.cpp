@@ -4,7 +4,7 @@
 
 
 char hdrFileName[] = "pixel_dtb.h";
-char hdrFileNameHost[] = "pxar_rpc.h"; // pixel_dtb.h
+char hdrFileNameHost[] = "pixel_dtb.h"; // pixel_dtb.h  pxar_rpc.h
 char className[] = "CTestboard";
 
 
@@ -289,7 +289,8 @@ int main(int argc, char* argv[])
 		{
 			parser.GetRpcExport();
 			parser.GetFunctionDecl();
-			cmdList.push_back(rpcfunct(parser.IsEmptyFnct(), parser.GetFname() + '$' + parser.GetFparam()));
+			std::string fname = parser.GetFname() + '$' + parser.GetFparam();
+			cmdList.push_back(rpcfunct(parser.IsEmptyFnct(), fname));
 
 			printf("%s$%s\n", parser.GetFname().c_str(), parser.GetFparam().c_str());
 		}
