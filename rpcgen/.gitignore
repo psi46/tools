@@ -6,3 +6,7 @@ rpcgen
 
 # Ignore the generated .h files of the RPC interface
 *.h
+
+Release/
+Debug/
+
